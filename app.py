@@ -11,31 +11,41 @@ from openpyxl.utils import get_column_letter
 GT_CRD_DAYS = 70
 COL_LENGTH_OFFSET = 12
 
-
-def parse_po_text(text: str) -> dict:
+def parse_po_text(text: str, file_type: str = "original") -> dict:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    PO_ID_POSITION = 2
+    CREATE_DATE_POSITION = 18
+    INFO_POSITION = 25
+    if file_type == "revised":
+        CREATE_DATE_POSITION += 1
+        target_pattern = "Specific changes are in red.."
+        for i, line in enumerate(lines):
+            if target_pattern in line:
+                INFO_POSITION = i + 3
+                break
+
     result = {}
 
-    # PO# (Line 3, "Purchase Order xxxxxx")
-    if len(lines) >= 3:
-        po_match = re.search(r"Purchase Order\s+([A-Z0-9]+)", lines[2])
+    # PO# ("Purchase Order xxxxxx")
+    if len(lines) >= PO_ID_POSITION + 1:
+        po_match = re.search(r"Purchase Order\s+([A-Z0-9]+)", lines[PO_ID_POSITION])
         if po_match:
             result["PO#"] = po_match.group(1)
 
-    # Material, Description, Qty, Unit Price (Line 26,, use "EACH" as anchor)
-    if len(lines) >= 26:
-        mdqu_match = re.search(r"\d+\s+\w+\s+([A-Z0-9\-]+)\s+(.+?)\s+(\d+)\s+EACH\s+(\d+\.\d+)", lines[25])
+    # Material, Description, Qty, Unit Price (use "EACH" as anchor)
+    if len(lines) >= INFO_POSITION + 2:
+        mdqu_match = re.search(r"\d+\s+\w+\s+([A-Z0-9\-]+)\s+(.+?)\s+(\d+)\s+EACH\s+(\d+\.\d+)", lines[INFO_POSITION])
         if mdqu_match:
             result["Material"] = mdqu_match.group(1)
             desc_part1 = mdqu_match.group(2).strip()
-            desc_part2 = lines[26] if len(lines) >= 27 else ""
+            desc_part2 = lines[INFO_POSITION + 1]
             result["Description"] = (desc_part1 + " " + desc_part2).strip()
             result["Qty"] = mdqu_match.group(3)
             result["Unit Price"] = mdqu_match.group(4)
 
-    # Create Date (Line 19, first item in the next line of "Date Terms Ship Via")
-    if len(lines) >= 19:
-        date_match = re.search(r"(\d{2}/\d{2}/\d{4})", lines[18])
+    # Create Date (first item in the next line of "Date Terms Ship Via")
+    if len(lines) >= CREATE_DATE_POSITION + 1:
+        date_match = re.search(r"(\d{2}/\d{2}/\d{4})", lines[CREATE_DATE_POSITION])
         if date_match:
             create_date_str = date_match.group(1)
             result["Create Date"] = datetime.strptime(create_date_str, "%m/%d/%Y")
@@ -82,7 +92,7 @@ def write_styled_excel(df: pd.DataFrame):
             col_idx = df.columns.get_loc(col_name) + 1
             cell = ws.cell(row=row, column=col_idx)
             if isinstance(cell.value, datetime):
-                cell.number_format = "MM/DD/YYYY"
+                cell.number_format = "MM-DD-YYYY"
 
         # Number columns
         if "Qty" in df.columns:
@@ -139,11 +149,6 @@ if "failed_files" not in st.session_state:
     st.session_state.failed_files = []
 
 uploaded_files = st.file_uploader("Please Upload PDF files here", type="pdf", accept_multiple_files=True)
-unique_files = {}
-for f in uploaded_files:
-    if f.name not in unique_files:  # 只保留第一個出現的
-        unique_files[f.name] = f
-uploaded_files = list(unique_files.values())
 st.write(f"Uploaded files: {len(uploaded_files) if uploaded_files else 0}")
 
 if st.button("Run!"):
@@ -159,9 +164,13 @@ if st.button("Run!"):
             "GT CRD",
         ]
         result_list = []
+        revised_result_list = []
+        original_files = []
+        revised_files = []
         failed_files = []
 
         for upload_file in uploaded_files:
+            file_type = "original"
             try:
                 with pdfplumber.open(upload_file) as pdf:
                     full_text = ""
@@ -174,30 +183,46 @@ if st.button("Run!"):
                 failed_files.append(upload_file.name)
                 continue
 
-            po_info = parse_po_text(full_text)
+            if "This Purchase Order has been changed. Specific changes are shown in red." in full_text:
+                file_type = "revised"    
+            po_info = parse_po_text(full_text, file_type=file_type)
+
             if not po_info:
                 st.warning(
-                    f"⚠️ Warning: Can not parse/extract information from this PDF file: {upload_file.name}"
+                    f"⚠️ Warning: Can not parse/extract information from this PDF file: {upload_file.name}, file type: {file_type}"
                 )
                 failed_files.append(upload_file.name)
                 continue
 
             missing_keys = [k for k in required_keys if k not in po_info]
             if missing_keys:
-                st.warning(f"⚠️ Warning: PDF {upload_file.name} missing columns: {missing_keys}, skipped.")
+                st.warning(f"⚠️ Warning: PDF {upload_file.name} (file type: {file_type}) missing columns: {missing_keys}, skipped.")
                 failed_files.append(upload_file.name)
                 continue
 
-            result_list.append(po_info)
+            if file_type == "revised":
+                revised_result_list.append(po_info)
+                revised_files.append(upload_file.name)
+            else:
+                result_list.append(po_info)
+                original_files.append(upload_file.name)
 
-        if not result_list:
+        if not (result_list or revised_result_list):
             st.error("Error: Can not successfully parse ANY PDF files, no report will be generated.")
             st.session_state.df = None
             st.session_state.excel_bytes = None
         else:
-            df = pd.DataFrame(result_list)
-            # deduplicate and sort by PO#
-            df = df.drop_duplicates().sort_values("PO#").reset_index(drop=True)
+            original_df = pd.DataFrame(result_list)
+            revised_df = pd.DataFrame(revised_result_list)
+            if not revised_df.empty:
+                df = pd.concat([original_df, revised_df], ignore_index=True)
+                df = df.drop_duplicates(subset=["PO#"], keep="last").sort_values("PO#").reset_index(drop=True)
+            
+            st.session_state.info = {
+                "original_files": original_files,
+                "revised_files": revised_files,
+                "failed_files": failed_files,
+            }
             st.session_state.df = df
             st.session_state.excel_bytes = write_styled_excel(df)
             st.session_state.failed_files = failed_files
@@ -212,11 +237,12 @@ if st.session_state.df is not None:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-    if not st.session_state.failed_files:
+    if not st.session_state.info["failed_files"]:
         st.success("✅ All files parsed successfully!")
     else:
+        st.info(f"Original files: {len(st.session_state.info['original_files'])}, revised files: {len(st.session_state.info['revised_files'])}")
         st.warning(
-            f"⚠️ Failed to parse some files below: {st.session_state.failed_files}.\nPlease check them again."
+            f"⚠️ Failed to parse some files below: {st.session_state.info['failed_files']}.\nPlease check them again."
         )
 
     st.success("Please download the Excel file.")
