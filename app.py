@@ -11,6 +11,7 @@ from openpyxl.utils import get_column_letter
 GT_CRD_DAYS = 70
 COL_LENGTH_OFFSET = 12
 
+
 def parse_po_text(text: str, file_type: str = "original") -> dict:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     PO_ID_POSITION = 2
@@ -34,7 +35,9 @@ def parse_po_text(text: str, file_type: str = "original") -> dict:
 
     # Material, Description, Qty, Unit Price (use "EACH" as anchor)
     if len(lines) >= INFO_POSITION + 2:
-        mdqu_match = re.search(r"\d+\s+\w+\s+([A-Z0-9\-]+)\s+(.+?)\s+(\d+)\s+EACH\s+(\d+\.\d+)", lines[INFO_POSITION])
+        mdqu_match = re.search(
+            r"\d+\s+\w+\s+([A-Z0-9\-]+)\s+(.+?)\s+(\d+)\s+EACH\s+(\d+\.\d+)", lines[INFO_POSITION]
+        )
         if mdqu_match:
             result["Material"] = mdqu_match.group(1)
             desc_part1 = mdqu_match.group(2).strip()
@@ -184,7 +187,7 @@ if st.button("Run!"):
                 continue
 
             if "This Purchase Order has been changed. Specific changes are shown in red." in full_text:
-                file_type = "revised"    
+                file_type = "revised"
             po_info = parse_po_text(full_text, file_type=file_type)
 
             if not po_info:
@@ -196,7 +199,9 @@ if st.button("Run!"):
 
             missing_keys = [k for k in required_keys if k not in po_info]
             if missing_keys:
-                st.warning(f"⚠️ Warning: PDF {upload_file.name} (file type: {file_type}) missing columns: {missing_keys}, skipped.")
+                st.warning(
+                    f"⚠️ Warning: PDF {upload_file.name} (file type: {file_type}) missing columns: {missing_keys}, skipped."
+                )
                 failed_files.append(upload_file.name)
                 continue
 
@@ -215,9 +220,13 @@ if st.button("Run!"):
             original_df = pd.DataFrame(result_list)
             revised_df = pd.DataFrame(revised_result_list)
             if not revised_df.empty:
-                df = pd.concat([original_df, revised_df], ignore_index=True)
-                df = df.drop_duplicates(subset=["PO#"], keep="last").sort_values("PO#").reset_index(drop=True)
-            
+                original_df = pd.concat([original_df, revised_df], ignore_index=True)
+            df = (
+                original_df.drop_duplicates(subset=["PO#"], keep="last")
+                .sort_values("PO#")
+                .reset_index(drop=True)
+            )
+
             st.session_state.info = {
                 "original_files": original_files,
                 "revised_files": revised_files,
@@ -240,7 +249,9 @@ if st.session_state.df is not None:
     if not st.session_state.info["failed_files"]:
         st.success("✅ All files parsed successfully!")
     else:
-        st.info(f"Original files: {len(st.session_state.info['original_files'])}, revised files: {len(st.session_state.info['revised_files'])}")
+        st.info(
+            f"Original files: {len(st.session_state.info['original_files'])}, revised files: {len(st.session_state.info['revised_files'])}"
+        )
         st.warning(
             f"⚠️ Failed to parse some files below: {st.session_state.info['failed_files']}.\nPlease check them again."
         )
