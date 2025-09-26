@@ -1,6 +1,7 @@
-/pdf_files
-/revised_pdf_files
+pdf_files/
+revised_pdf_files/
 *.jpg
 *.xlsx
 .DS_STORE
 settings.json
+__pycache__/
