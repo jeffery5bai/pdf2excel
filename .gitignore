@@ -1,5 +1,6 @@
 pdf_files/
 revised_pdf_files/
+retail_pdf_files/
 *.jpg
 *.xlsx
 .DS_STORE
