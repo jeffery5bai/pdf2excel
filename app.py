@@ -7,6 +7,7 @@ import streamlit as st
 from excel_writer.retail import RetailExcelWriter
 from excel_writer.wholesale import WholesaleExcelWriter
 from pdf_parser.retail_parser import RetailPOParser
+from pdf_parser.sk_parser import SKPOParser
 from pdf_parser.wholesale_parser import WholesalePOParser
 
 # -------------------- Streamlit App --------------------
@@ -31,7 +32,7 @@ st.subheader("Purchase Order PDF Parser → Excel")
 
 mode = st.radio(
     "Select order type:",
-    options=["Wholesale", "Retail"],
+    options=["Wholesale", "Retail", "SK"],
     horizontal=True,
 )
 st.session_state["mode"] = mode
@@ -54,6 +55,9 @@ if st.button("Run!"):
         if mode == "Wholesale":
             po_parser = WholesalePOParser()
             excel_writer = WholesaleExcelWriter()
+        elif mode == "SK":
+            po_parser = SKPOParser()
+            excel_writer = WholesaleExcelWriter()
         else:
             po_parser = RetailPOParser()
             excel_writer = RetailExcelWriter()
@@ -66,8 +70,10 @@ if st.button("Run!"):
         required_keys = excel_writer.output_schema
 
         for upload_file in uploaded_files:
-            if (mode == "Wholesale" and "KP" not in upload_file.name) or (
-                mode == "Retail" and "DI" not in upload_file.name
+            if (
+                (mode == "Wholesale" and "KP" not in upload_file.name)
+                or (mode == "Retail" and "DI" not in upload_file.name)
+                or (mode == "SK" and "SK" not in upload_file.name)
             ):
                 st.warning(
                     f"⚠️ Warning: PDF {upload_file.name} seems not a valid file type in mode {mode}, skipped."
@@ -100,6 +106,9 @@ if st.button("Run!"):
             ):
                 file_type = "revised"
             if mode == "Wholesale":
+                po_info = po_parser.parse_po_content(full_text, file_type=file_type)
+            elif mode == "SK":
+                po_parser.set_gt_crd_days(full_text)
                 po_info = po_parser.parse_po_content(full_text, file_type=file_type)
             else:  # Retail
                 po_info = po_parser.parse_po_content(full_text, words)
@@ -137,7 +146,9 @@ if st.button("Run!"):
             revised_df = pd.DataFrame(revised_result_list)
             if not revised_df.empty:
                 original_df = pd.concat([original_df, revised_df], ignore_index=True)
-            id_cols = ["PO#"] if mode == "Wholesale" else ["Kohler PO", "Kohler SKU"]
+            id_cols = (
+                ["PO#"] if mode in ("Wholesale", "SK") else ["Kohler PO", "Kohler SKU"]
+            )
             df = (
                 original_df[required_keys]
                 .drop_duplicates(subset=id_cols, keep="last")
