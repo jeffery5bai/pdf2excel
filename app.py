@@ -152,7 +152,7 @@ if st.button("Run!"):
             df = (
                 original_df[required_keys]
                 .drop_duplicates(subset=id_cols, keep="last")
-                .sort_values(id_cols)
+                .sort_values(id_cols[0], kind="stable")
                 .reset_index(drop=True)
             )
 
